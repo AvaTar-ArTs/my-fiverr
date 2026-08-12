@@ -110,3 +110,29 @@ def test_audit_events_cannot_be_deleted(tmp_path: Path) -> None:
 
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute("DELETE FROM audit_events WHERE id = 1")
+
+
+def test_initialize_store_migrates_pre_revision_profile_and_gig_tables(tmp_path: Path) -> None:
+    from fiverr_seller_os.models import get_gig, get_profile
+    from fiverr_seller_os.store import DATABASE_NAME, initialize_store, open_connection
+
+    state_dir = tmp_path / "legacy-state"
+    state_dir.mkdir()
+    database_path = state_dir / DATABASE_NAME
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "CREATE TABLE profiles (id INTEGER PRIMARY KEY, public_content_json TEXT NOT NULL)"
+        )
+        connection.execute(
+            "CREATE TABLE gigs (id INTEGER PRIMARY KEY, profile_id INTEGER, title TEXT NOT NULL, public_content_json TEXT NOT NULL)"
+        )
+        connection.execute("INSERT INTO profiles (public_content_json) VALUES ('{}')")
+        connection.execute(
+            "INSERT INTO gigs (profile_id, title, public_content_json) VALUES (1, 'Legacy', '{}')"
+        )
+
+    migrated_path = initialize_store(state_dir)
+    initialize_store(state_dir)
+
+    assert get_profile(migrated_path, 1).revision == 1
+    assert get_gig(migrated_path, 1).revision == 1

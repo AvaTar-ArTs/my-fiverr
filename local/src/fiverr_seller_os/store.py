@@ -37,9 +37,20 @@ def initialize_store(state_dir: Path) -> Path:
         with connection:
             for statement in _SCHEMA:
                 connection.execute(statement)
+            _migrate_legacy_revisions(connection)
     finally:
         connection.close()
     return database_path
+
+
+def _migrate_legacy_revisions(connection: sqlite3.Connection) -> None:
+    """Upgrade pre-revision profile and Gig tables without replacing user data."""
+    for table in ("profiles", "gigs"):
+        columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if "revision" not in columns:
+            connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1)"
+            )
 
 
 _SCHEMA = (
@@ -47,6 +58,7 @@ _SCHEMA = (
 CREATE TABLE IF NOT EXISTS profiles (
     id INTEGER PRIMARY KEY,
     public_content_json TEXT NOT NULL CHECK(json_valid(public_content_json) AND json_type(public_content_json) = 'object'),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
@@ -59,6 +71,7 @@ CREATE TABLE IF NOT EXISTS gigs (
     title TEXT NOT NULL,
     public_content_json TEXT NOT NULL CHECK(json_valid(public_content_json) AND json_type(public_content_json) = 'object'),
     status TEXT NOT NULL DEFAULT 'draft',
+    revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
