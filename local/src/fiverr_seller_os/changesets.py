@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import sqlite3
 from typing import Mapping
 
 from .models import (
@@ -36,6 +37,8 @@ class ChangesetProposal:
     actor: str
     status: str
     created_at: str
+    approved_at: str | None
+    approved_by: str | None
 
 
 def propose_changeset(
@@ -71,7 +74,8 @@ def propose_changeset(
             )
             row = connection.execute(
                 """
-                SELECT id, target_type, target_id, patch_json, base_revision, actor, status, created_at
+                SELECT id, target_type, target_id, patch_json, base_revision, actor, status, created_at,
+                       approved_at, approved_by
                 FROM changesets WHERE id = ?
                 """,
                 (cursor.lastrowid,),
@@ -86,7 +90,8 @@ def get_changeset(database_path: Path, changeset_id: int) -> ChangesetProposal:
     with open_connection(database_path) as connection:
         row = connection.execute(
             """
-            SELECT id, target_type, target_id, patch_json, base_revision, actor, status, created_at
+            SELECT id, target_type, target_id, patch_json, base_revision, actor, status, created_at,
+                   approved_at, approved_by
             FROM changesets WHERE id = ?
             """,
             (changeset_id,),
@@ -119,7 +124,8 @@ def list_changesets(
     where_clause = f" WHERE {' AND '.join(predicates)}" if predicates else ""
     with open_connection(database_path) as connection:
         rows = connection.execute(
-            "SELECT id, target_type, target_id, patch_json, base_revision, actor, status, created_at "
+            "SELECT id, target_type, target_id, patch_json, base_revision, actor, status, created_at, "
+            "approved_at, approved_by "
             f"FROM changesets{where_clause} ORDER BY id",
             values,
         ).fetchall()
@@ -142,7 +148,112 @@ def _changeset_snapshot(row: tuple[object, ...]) -> ChangesetProposal:
         actor=str(row[5]),
         status=str(row[6]),
         created_at=str(row[7]),
+        approved_at=None if row[8] is None else str(row[8]),
+        approved_by=None if row[9] is None else str(row[9]),
     )
+
+
+def approve_changeset(
+    database_path: Path, changeset_id: int, *, expected_revision: int, actor: str
+) -> ChangesetProposal:
+    """Atomically approve one proposed change against its unchanged canonical target.
+
+    Approval is the sole production mutation path for profile and Gig public
+    content. The changeset, canonical update, and immutable audit record all
+    commit together or none of them do.
+    """
+    _validate_changeset_id(changeset_id)
+    _validate_expected_revision(expected_revision)
+    _validate_actor(actor)
+    with open_connection(database_path) as connection:
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT id, target_type, target_id, patch_json, base_revision, actor, status, created_at,
+                       approved_at, approved_by
+                FROM changesets WHERE id = ?
+                """,
+                (changeset_id,),
+            ).fetchone()
+            if row is None:
+                raise ChangesetNotFoundError(f"Changeset {changeset_id} was not found")
+            proposal = _changeset_snapshot(row)
+            if proposal.status != "proposed":
+                raise InvalidChangesetError("changeset is not proposed")
+
+            content, current_revision = _transactional_target_content(
+                connection, proposal.target_type, proposal.target_id
+            )
+            if expected_revision != current_revision:
+                raise InvalidChangesetError("expected_revision does not match the canonical target")
+            if proposal.base_revision != current_revision:
+                raise InvalidChangesetError("changeset base_revision does not match the canonical target")
+
+            merged_content = _mutable_json_value(content)
+            assert isinstance(merged_content, dict)
+            mutable_patch = _mutable_json_value(proposal.patch)
+            assert isinstance(mutable_patch, dict)
+            merged_content.update(mutable_patch)
+            _validate_complete_content(proposal.target_type, merged_content)
+            encoded_content = json.dumps(merged_content, sort_keys=True, separators=(",", ":"))
+            new_revision = current_revision + 1
+            if proposal.target_type == "profile":
+                update = connection.execute(
+                    "UPDATE profiles SET public_content_json = ?, revision = ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE id = ?",
+                    (encoded_content, new_revision, proposal.target_id),
+                )
+            else:
+                update = connection.execute(
+                    "UPDATE gigs SET title = ?, public_content_json = ?, revision = ?, updated_at = CURRENT_TIMESTAMP "
+                    "WHERE id = ?",
+                    (str(merged_content["title"]), encoded_content, new_revision, proposal.target_id),
+                )
+            if update.rowcount != 1:
+                raise RuntimeError("canonical target disappeared during approval")
+
+            approved = connection.execute(
+                """
+                UPDATE changesets
+                SET status = 'approved', approved_at = CURRENT_TIMESTAMP, approved_by = ?
+                WHERE id = ? AND status = 'proposed'
+                """,
+                (actor.strip(), changeset_id),
+            )
+            if approved.rowcount != 1:
+                raise RuntimeError("changeset approval did not update exactly one proposal")
+            audit_data = json.dumps(
+                {
+                    "actor": actor.strip(),
+                    "changeset_id": changeset_id,
+                    "new_revision": new_revision,
+                    "previous_revision": current_revision,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            connection.execute(
+                """
+                INSERT INTO audit_events (event_type, entity_type, entity_id, event_data_json)
+                VALUES ('changeset_approved', ?, ?, ?)
+                """,
+                (proposal.target_type, proposal.target_id, audit_data),
+            )
+            approved_row = connection.execute(
+                """
+                SELECT id, target_type, target_id, patch_json, base_revision, actor, status, created_at,
+                       approved_at, approved_by
+                FROM changesets WHERE id = ?
+                """,
+                (changeset_id,),
+            ).fetchone()
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+    assert approved_row is not None
+    return _changeset_snapshot(approved_row)
 
 
 def _target_content(database_path: Path, target_type: str, target_id: int) -> tuple[Mapping[str, object], int]:
@@ -164,6 +275,19 @@ def _validate_request(
         raise InvalidChangesetError("base_revision must be a positive integer")
     if base_revision != current_revision:
         raise InvalidChangesetError("base_revision does not match the canonical target")
+    _validate_actor(actor)
+
+
+def _validate_expected_revision(expected_revision: object) -> None:
+    if (
+        not isinstance(expected_revision, int)
+        or isinstance(expected_revision, bool)
+        or expected_revision < 1
+    ):
+        raise InvalidChangesetError("expected_revision must be a positive integer")
+
+
+def _validate_actor(actor: object) -> None:
     if not isinstance(actor, str) or not actor.strip():
         raise InvalidChangesetError("actor must be a non-empty label")
 
@@ -191,6 +315,40 @@ def _validate_patch(
     except InvalidPublicContentError as error:
         raise InvalidChangesetError(str(error)) from error
     return json.loads(json.dumps(dict(patch), sort_keys=True, separators=(",", ":")))
+
+
+def _validate_complete_content(target_type: str, content: Mapping[str, object]) -> None:
+    try:
+        if target_type == "profile":
+            _validate_profile_content(content)
+        elif target_type == "gig":
+            _validate_gig_content(content)
+        else:  # Protected by schema; defensive for corrupt local databases.
+            raise InvalidChangesetError("target_type must be 'profile' or 'gig'")
+    except InvalidPublicContentError as error:
+        raise InvalidChangesetError(str(error)) from error
+
+
+def _transactional_target_content(
+    connection: sqlite3.Connection, target_type: str, target_id: int
+) -> tuple[Mapping[str, object], int]:
+    """Load and validate the target while the approval transaction owns the write lock."""
+    if target_type == "profile":
+        row = connection.execute(
+            "SELECT public_content_json, revision FROM profiles WHERE id = ?", (target_id,)
+        ).fetchone()
+    elif target_type == "gig":
+        row = connection.execute(
+            "SELECT public_content_json, revision FROM gigs WHERE id = ?", (target_id,)
+        ).fetchone()
+    else:
+        raise InvalidChangesetError("target_type must be 'profile' or 'gig'")
+    if row is None:
+        raise InvalidChangesetError("changeset target was not found")
+    content = json.loads(str(row[0]))
+    if not isinstance(content, dict):
+        raise RuntimeError("canonical public content is not an object")
+    return content, int(row[1])
 
 
 def _mutable_json_value(value: object) -> object:

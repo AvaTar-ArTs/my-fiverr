@@ -89,6 +89,8 @@ def _reject_incompatible_changesets_schema(connection: sqlite3.Connection) -> No
         "actor": ("TEXT", 1, None, 0),
         "status": ("TEXT", 1, "'proposed'", 0),
         "created_at": ("TEXT", 1, "CURRENT_TIMESTAMP", 0),
+        "approved_at": ("TEXT", 0, None, 0),
+        "approved_by": ("TEXT", 0, None, 0),
     }
     actual = {str(row[1]): (str(row[2]).upper(), int(row[3]), row[4], int(row[5])) for row in columns}
     sql_row = connection.execute(
@@ -99,7 +101,10 @@ def _reject_incompatible_changesets_schema(connection: sqlite3.Connection) -> No
         "CHECK(TARGET_TYPEIN('PROFILE','GIG'))",
         "CHECK(JSON_VALID(PATCH_JSON)ANDJSON_TYPE(PATCH_JSON)='OBJECT')",
         "CHECK(BASE_REVISION>=1)",
-        "CHECK(STATUS='PROPOSED')",
+        "STATUS='PROPOSED'",
+        "STATUS='APPROVED'",
+        "APPROVED_ATISNOTNULL",
+        "APPROVED_BYISNOTNULL",
     )
     if actual != expected or not all(constraint in normalized_sql for constraint in required_constraints):
         raise RuntimeError(
@@ -141,7 +146,12 @@ CREATE TABLE IF NOT EXISTS changesets (
     actor TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'proposed',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CHECK(status = 'proposed')
+    approved_at TEXT,
+    approved_by TEXT,
+    CHECK(
+        (status = 'proposed' AND approved_at IS NULL AND approved_by IS NULL)
+        OR (status = 'approved' AND approved_at IS NOT NULL AND approved_by IS NOT NULL)
+    )
 )
 """,
 

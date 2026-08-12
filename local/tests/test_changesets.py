@@ -65,6 +65,337 @@ def test_proposed_profile_changeset_is_stored_without_mutating_canonical_content
     assert get_profile(database_path, profile.id).public_content == profile.public_content
 
 
+def test_approval_atomically_updates_the_canonical_target_and_audits_it(tmp_path: Path) -> None:
+    from fiverr_seller_os.changesets import approve_changeset, get_changeset, propose_changeset
+    from fiverr_seller_os.models import get_profile
+    from fiverr_seller_os.store import initialize_store, open_connection
+
+    database_path = initialize_store(tmp_path / "state")
+    profile = seed_profile_fixture(database_path, _profile_content())
+    proposal = propose_changeset(
+        database_path,
+        target_type="profile",
+        target_id=profile.id,
+        patch={"tagline": "Approved fictional tagline"},
+        base_revision=profile.revision,
+        actor="draft-author",
+    )
+
+    approved = approve_changeset(
+        database_path, proposal.id, expected_revision=profile.revision, actor="seller"
+    )
+
+    canonical = get_profile(database_path, profile.id)
+    assert canonical.public_content["tagline"] == "Approved fictional tagline"
+    assert canonical.public_content["skills"] == ("python", "mcp")
+    assert canonical.revision == 2
+    assert approved.status == "approved"
+    assert approved.approved_at
+    assert approved.approved_by == "seller"
+    assert get_changeset(database_path, proposal.id) == approved
+    with open_connection(database_path) as connection:
+        events = connection.execute(
+            "SELECT event_type, entity_type, entity_id, event_data_json FROM audit_events"
+        ).fetchall()
+    assert events == [
+        (
+            "changeset_approved",
+            "profile",
+            profile.id,
+            '{"actor":"seller","changeset_id":1,"new_revision":2,"previous_revision":1}',
+        )
+    ]
+
+
+def test_approval_updates_a_gig_and_keeps_its_title_column_in_sync(tmp_path: Path) -> None:
+    from fiverr_seller_os.changesets import approve_changeset, propose_changeset
+    from fiverr_seller_os.models import get_gig
+    from fiverr_seller_os.store import initialize_store, open_connection
+
+    database_path = initialize_store(tmp_path / "state")
+    profile = seed_profile_fixture(database_path, _profile_content())
+    gig = seed_gig_fixture(database_path, profile.id, _gig_content())
+    proposal = propose_changeset(
+        database_path, target_type="gig", target_id=gig.id,
+        patch={"title": "Approved fictional MCP integration"}, base_revision=1, actor="draft-author"
+    )
+
+    approve_changeset(database_path, proposal.id, expected_revision=1, actor="seller")
+
+    assert get_gig(database_path, gig.id).public_content["title"] == "Approved fictional MCP integration"
+    assert get_gig(database_path, gig.id).revision == 2
+    with open_connection(database_path) as connection:
+        assert connection.execute("SELECT title FROM gigs WHERE id = ?", (gig.id,)).fetchone() == (
+            "Approved fictional MCP integration",
+        )
+
+
+def test_approval_replaces_a_nested_packages_value_when_given_the_complete_packages_object(
+    tmp_path: Path,
+) -> None:
+    from fiverr_seller_os.changesets import approve_changeset, propose_changeset
+    from fiverr_seller_os.models import get_gig
+    from fiverr_seller_os.store import initialize_store
+
+    database_path = initialize_store(tmp_path / "state")
+    profile = seed_profile_fixture(database_path, _profile_content())
+    gig_content = _gig_content()
+    gig_content["packages"] = {
+        **gig_content["packages"],
+        "standard": {
+            "name": "Existing standard test fixture",
+            "description": "An existing package that the replacement removes.",
+            "price_usd": 250,
+            "delivery_days": 6,
+            "revisions": 2,
+            "features": ["two safe tools"],
+        },
+    }
+    gig = seed_gig_fixture(database_path, profile.id, gig_content)
+    replacement_packages = {
+        "basic": {
+            "name": "Revised basic test fixture",
+            "description": "A complete replacement package object.",
+            "price_usd": 175,
+            "delivery_days": 5,
+            "revisions": 2,
+            "features": ["one safe tool", "plain-English handoff"],
+        }
+    }
+    proposal = propose_changeset(
+        database_path,
+        target_type="gig",
+        target_id=gig.id,
+        patch={"packages": replacement_packages},
+        base_revision=1,
+        actor="draft-author",
+    )
+
+    approve_changeset(database_path, proposal.id, expected_revision=1, actor="seller")
+
+    packages = get_gig(database_path, gig.id).public_content["packages"]
+    assert packages["basic"]["name"] == "Revised basic test fixture"  # type: ignore[index]
+    assert packages["basic"]["price_usd"] == 175  # type: ignore[index]
+    assert packages["basic"]["features"] == ("one safe tool", "plain-English handoff")  # type: ignore[index]
+    assert "standard" not in packages  # type: ignore[operator]
+
+
+def test_approval_rejects_a_stale_expected_revision_without_modifying_anything(tmp_path: Path) -> None:
+    from fiverr_seller_os.changesets import InvalidChangesetError, approve_changeset, propose_changeset
+    from fiverr_seller_os.models import get_profile
+    from fiverr_seller_os.store import initialize_store, open_connection
+
+    database_path = initialize_store(tmp_path / "state")
+    profile = seed_profile_fixture(database_path, _profile_content())
+    proposal = propose_changeset(
+        database_path, target_type="profile", target_id=profile.id,
+        patch={"tagline": "Never applied"}, base_revision=1, actor="draft-author"
+    )
+
+    with pytest.raises(InvalidChangesetError, match="expected_revision"):
+        approve_changeset(database_path, proposal.id, expected_revision=2, actor="seller")
+
+    assert get_profile(database_path, profile.id) == profile
+    with open_connection(database_path) as connection:
+        assert connection.execute("SELECT status, approved_at, approved_by FROM changesets").fetchall() == [
+            ("proposed", None, None)
+        ]
+        assert connection.execute("SELECT id FROM audit_events").fetchall() == []
+
+
+def test_approval_rejects_a_stale_proposal_base_revision_without_modifying_anything(
+    tmp_path: Path,
+) -> None:
+    from fiverr_seller_os.changesets import InvalidChangesetError, approve_changeset, propose_changeset
+    from fiverr_seller_os.models import get_profile
+    from fiverr_seller_os.store import initialize_store, open_connection
+
+    database_path = initialize_store(tmp_path / "state")
+    profile = seed_profile_fixture(database_path, _profile_content())
+    proposal = propose_changeset(
+        database_path, target_type="profile", target_id=profile.id,
+        patch={"tagline": "Never applied"}, base_revision=1, actor="draft-author"
+    )
+    # Simulate a prior approved writer: proposal creation predates canonical revision 2.
+    with open_connection(database_path) as connection:
+        connection.execute("UPDATE profiles SET revision = 2 WHERE id = ?", (profile.id,))
+
+    with pytest.raises(InvalidChangesetError, match="base_revision"):
+        approve_changeset(database_path, proposal.id, expected_revision=2, actor="seller")
+
+    assert get_profile(database_path, profile.id).revision == 2
+    with open_connection(database_path) as connection:
+        assert connection.execute("SELECT status, approved_at, approved_by FROM changesets").fetchall() == [
+            ("proposed", None, None)
+        ]
+        assert connection.execute("SELECT id FROM audit_events").fetchall() == []
+
+
+def test_approval_cannot_be_repeated(tmp_path: Path) -> None:
+    from fiverr_seller_os.changesets import InvalidChangesetError, approve_changeset, propose_changeset
+    from fiverr_seller_os.models import get_profile
+    from fiverr_seller_os.store import initialize_store, open_connection
+
+    database_path = initialize_store(tmp_path / "state")
+    profile = seed_profile_fixture(database_path, _profile_content())
+    proposal = propose_changeset(
+        database_path, target_type="profile", target_id=profile.id,
+        patch={"tagline": "Applied once"}, base_revision=1, actor="draft-author"
+    )
+    approve_changeset(database_path, proposal.id, expected_revision=1, actor="seller")
+
+    with pytest.raises(InvalidChangesetError, match="not proposed"):
+        approve_changeset(database_path, proposal.id, expected_revision=2, actor="seller")
+
+    assert get_profile(database_path, profile.id).revision == 2
+    with open_connection(database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM audit_events").fetchone() == (1,)
+
+
+@pytest.mark.parametrize(
+    ("changeset_id", "expected_revision", "actor", "message"),
+    [
+        (0, 1, "seller", "changeset_id"),
+        (True, 1, "seller", "changeset_id"),
+        ("1", 1, "seller", "changeset_id"),
+        (1, 0, "seller", "expected_revision"),
+        (1, True, "seller", "expected_revision"),
+        (1, "1", "seller", "expected_revision"),
+        (1, 1, "", "actor"),
+        (1, 1, "   ", "actor"),
+        (1, 1, 1, "actor"),
+    ],
+)
+def test_approval_rejects_invalid_request_fields(
+    tmp_path: Path, changeset_id: object, expected_revision: object, actor: object, message: str
+) -> None:
+    from fiverr_seller_os.changesets import InvalidChangesetError, approve_changeset
+    from fiverr_seller_os.store import initialize_store
+
+    database_path = initialize_store(tmp_path / "state")
+    with pytest.raises(InvalidChangesetError, match=message):
+        approve_changeset(  # type: ignore[arg-type]
+            database_path, changeset_id, expected_revision=expected_revision, actor=actor
+        )
+
+
+def test_approval_rejects_a_missing_changeset(tmp_path: Path) -> None:
+    from fiverr_seller_os.changesets import ChangesetNotFoundError, approve_changeset
+    from fiverr_seller_os.store import initialize_store
+
+    database_path = initialize_store(tmp_path / "state")
+    with pytest.raises(ChangesetNotFoundError, match="Changeset 404 was not found"):
+        approve_changeset(database_path, 404, expected_revision=1, actor="seller")
+
+
+def test_approval_rolls_back_every_change_when_the_audit_insert_fails(tmp_path: Path) -> None:
+    import sqlite3
+
+    from fiverr_seller_os.changesets import approve_changeset, propose_changeset
+    from fiverr_seller_os.models import get_profile
+    from fiverr_seller_os.store import initialize_store, open_connection
+
+    database_path = initialize_store(tmp_path / "state")
+    profile = seed_profile_fixture(database_path, _profile_content())
+    proposal = propose_changeset(
+        database_path, target_type="profile", target_id=profile.id,
+        patch={"tagline": "Must roll back"}, base_revision=1, actor="draft-author"
+    )
+    with open_connection(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TRIGGER abort_approval_audit
+            BEFORE INSERT ON audit_events
+            WHEN NEW.event_type = 'changeset_approved'
+            BEGIN
+                SELECT RAISE(ABORT, 'forced audit failure');
+            END
+            """
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="forced audit failure"):
+        approve_changeset(database_path, proposal.id, expected_revision=1, actor="seller")
+
+    assert get_profile(database_path, profile.id) == profile
+    with open_connection(database_path) as connection:
+        assert connection.execute("SELECT status, approved_at, approved_by FROM changesets").fetchall() == [
+            ("proposed", None, None)
+        ]
+        assert connection.execute("SELECT id FROM audit_events").fetchall() == []
+
+
+def test_approval_rolls_back_when_its_canonical_target_is_missing(tmp_path: Path) -> None:
+    from fiverr_seller_os.changesets import InvalidChangesetError, approve_changeset, propose_changeset
+    from fiverr_seller_os.models import get_profile
+    from fiverr_seller_os.store import initialize_store, open_connection
+
+    database_path = initialize_store(tmp_path / "state")
+    target = seed_profile_fixture(database_path, _profile_content())
+    unaffected = seed_profile_fixture(
+        database_path, {**_profile_content(), "tagline": "Unaffected canonical profile"}
+    )
+    proposal = propose_changeset(
+        database_path,
+        target_type="profile",
+        target_id=target.id,
+        patch={"tagline": "Never applied"},
+        base_revision=target.revision,
+        actor="draft-author",
+    )
+    with open_connection(database_path) as connection:
+        connection.execute("DELETE FROM profiles WHERE id = ?", (target.id,))
+
+    with pytest.raises(InvalidChangesetError, match="target was not found"):
+        approve_changeset(database_path, proposal.id, expected_revision=1, actor="seller")
+
+    assert get_profile(database_path, unaffected.id) == unaffected
+    with open_connection(database_path) as connection:
+        assert connection.execute(
+            "SELECT status, approved_at, approved_by FROM changesets WHERE id = ?", (proposal.id,)
+        ).fetchone() == ("proposed", None, None)
+        assert connection.execute("SELECT COUNT(*) FROM audit_events").fetchone() == (0,)
+
+
+def test_approval_rolls_back_when_corrupted_canonical_content_fails_validation(
+    tmp_path: Path,
+) -> None:
+    from fiverr_seller_os.changesets import InvalidChangesetError, approve_changeset, propose_changeset
+    from fiverr_seller_os.models import get_profile
+    from fiverr_seller_os.store import initialize_store, open_connection
+
+    database_path = initialize_store(tmp_path / "state")
+    target = seed_profile_fixture(database_path, _profile_content())
+    unaffected = seed_profile_fixture(
+        database_path, {**_profile_content(), "tagline": "Unaffected canonical profile"}
+    )
+    proposal = propose_changeset(
+        database_path,
+        target_type="profile",
+        target_id=target.id,
+        patch={"tagline": "Never applied"},
+        base_revision=target.revision,
+        actor="draft-author",
+    )
+    with open_connection(database_path) as connection:
+        connection.execute("UPDATE profiles SET public_content_json = '{}' WHERE id = ?", (target.id,))
+        corrupted_before_approval = connection.execute(
+            "SELECT public_content_json, revision FROM profiles WHERE id = ?", (target.id,)
+        ).fetchone()
+
+    with pytest.raises(InvalidChangesetError, match="profile public content is missing"):
+        approve_changeset(database_path, proposal.id, expected_revision=1, actor="seller")
+
+    assert get_profile(database_path, unaffected.id) == unaffected
+    with open_connection(database_path) as connection:
+        assert connection.execute(
+            "SELECT public_content_json, revision FROM profiles WHERE id = ?", (target.id,)
+        ).fetchone() == corrupted_before_approval
+        assert connection.execute(
+            "SELECT status, approved_at, approved_by FROM changesets WHERE id = ?", (proposal.id,)
+        ).fetchone() == ("proposed", None, None)
+        assert connection.execute("SELECT COUNT(*) FROM audit_events").fetchone() == (0,)
+
+
 def test_proposed_gig_changeset_accepts_an_allowlisted_patch(tmp_path: Path) -> None:
     from fiverr_seller_os.changesets import propose_changeset
     from fiverr_seller_os.store import initialize_store
