@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 from types import MappingProxyType
 from typing import Mapping
 
@@ -47,7 +48,19 @@ _PACKAGE_TIERS = frozenset({"basic", "standard", "premium"})
 _PACKAGE_FIELDS = frozenset(
     {"name", "description", "price_usd", "delivery_days", "revisions", "features"}
 )
-_SENSITIVE_KEY_NAMES = frozenset({"password", "token", "secret", "cookie", "api_key"})
+# Public records are deliberately a narrow, non-secret subset of seller data.
+# These patterns reject assignments, not ordinary prose mentioning an API key.
+_SENSITIVE_KEY_PARTS = frozenset({"password", "token", "secret", "cookie", "credential", "credentials"})
+_SENSITIVE_COMPACT_NAMES = _SENSITIVE_KEY_PARTS | frozenset({"apikey"})
+_CREDENTIAL_ASSIGNMENT = re.compile(
+    r"(?i)\b(?:"
+    r"api[ _-]?key|apikey|"
+    r"client[ _-]?secret|clientsecret|"
+    r"access[ _-]?token|accesstoken|"
+    r"password|token|secret|cookie|credentials?"
+    r")\s*[:=]\s*\S+"
+)
+_BEARER_AUTHORIZATION = re.compile(r"(?i)\bauthorization\s*:\s*bearer\s+\S+")
 
 
 def get_profile(database_path: Path, profile_id: int) -> ProfileSnapshot:
@@ -165,12 +178,15 @@ def _reject_sensitive_keys(value: object) -> None:
         for key, nested_value in value.items():
             if not isinstance(key, str):
                 raise InvalidPublicContentError("public content keys must be strings")
-            parts = tuple(
-                part for part in key.casefold().replace("-", "_").split("_") if part
-            )
-            normalized = "_".join(parts)
-            if normalized in _SENSITIVE_KEY_NAMES or any(
-                part in _SENSITIVE_KEY_NAMES - {"api_key"} for part in parts
+            # Split ``clientSecret``, ``client_secret`` and ``client-secret``
+            # equivalently, then also inspect their compact spelling.
+            segmented = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", key)
+            parts = tuple(part.casefold() for part in re.split(r"[^A-Za-z0-9]+", segmented) if part)
+            compact = "".join(parts)
+            if (
+                compact in _SENSITIVE_COMPACT_NAMES
+                or compact in {"clientsecret", "accesstoken"}
+                or any(part in _SENSITIVE_KEY_PARTS or "apikey" in part for part in parts)
             ):
                 raise InvalidPublicContentError(
                     f"sensitive credential-like key {key!r} is not allowed in public content"
@@ -179,6 +195,12 @@ def _reject_sensitive_keys(value: object) -> None:
     elif isinstance(value, list):
         for nested_value in value:
             _reject_sensitive_keys(nested_value)
+    elif isinstance(value, str) and (
+        _CREDENTIAL_ASSIGNMENT.search(value) or _BEARER_AUTHORIZATION.search(value)
+    ):
+        raise InvalidPublicContentError(
+            "credential-like assignment text is not allowed in public content"
+        )
 
 
 def _freeze_json_object(encoded_content: str) -> PublicContent:

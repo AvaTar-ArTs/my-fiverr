@@ -136,3 +136,59 @@ def test_initialize_store_migrates_pre_revision_profile_and_gig_tables(tmp_path:
 
     assert get_profile(migrated_path, 1).revision == 1
     assert get_gig(migrated_path, 1).revision == 1
+
+
+def test_initialize_store_refuses_incompatible_legacy_changesets_without_modifying_it(tmp_path: Path) -> None:
+    from fiverr_seller_os.store import DATABASE_NAME, initialize_store
+
+    state_dir = tmp_path / "legacy-state"
+    state_dir.mkdir()
+    database_path = state_dir / DATABASE_NAME
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("CREATE TABLE changesets (id INTEGER PRIMARY KEY, target_type TEXT NOT NULL)")
+        connection.execute("INSERT INTO changesets (target_type) VALUES ('profile')")
+    os.chmod(database_path, 0o640)
+    original_mode = stat.S_IMODE(database_path.stat().st_mode)
+
+    with pytest.raises(RuntimeError, match="changesets table is incompatible"):
+        initialize_store(state_dir)
+    assert stat.S_IMODE(database_path.stat().st_mode) == original_mode
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA table_info(changesets)").fetchall() == [
+            (0, "id", "INTEGER", 0, None, 1),
+            (1, "target_type", "TEXT", 1, None, 0),
+        ]
+        assert connection.execute("SELECT id, target_type FROM changesets").fetchall() == [(1, "profile")]
+
+
+def test_initialize_store_rejects_incompatible_legacy_database_before_changing_existing_permissions(
+    tmp_path: Path,
+) -> None:
+    """Legacy rejection must leave both pre-existing filesystem objects untouched."""
+    from fiverr_seller_os.store import DATABASE_NAME, initialize_store
+
+    state_dir = tmp_path / "legacy-state"
+    state_dir.mkdir(mode=0o755)
+    os.chmod(state_dir, 0o755)
+    database_path = state_dir / DATABASE_NAME
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("CREATE TABLE changesets (id INTEGER PRIMARY KEY, target_type TEXT NOT NULL)")
+        connection.execute("INSERT INTO changesets (target_type) VALUES ('profile')")
+    os.chmod(database_path, 0o640)
+
+    original_directory_mode = stat.S_IMODE(state_dir.stat().st_mode)
+    original_database_mode = stat.S_IMODE(database_path.stat().st_mode)
+    original_database_bytes = database_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="changesets table is incompatible"):
+        initialize_store(state_dir)
+
+    assert stat.S_IMODE(state_dir.stat().st_mode) == original_directory_mode
+    assert stat.S_IMODE(database_path.stat().st_mode) == original_database_mode
+    assert database_path.read_bytes() == original_database_bytes
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("PRAGMA table_info(changesets)").fetchall() == [
+            (0, "id", "INTEGER", 0, None, 1),
+            (1, "target_type", "TEXT", 1, None, 0),
+        ]
+        assert connection.execute("SELECT id, target_type FROM changesets").fetchall() == [(1, "profile")]

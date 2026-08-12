@@ -176,6 +176,57 @@ def test_fixture_helpers_reject_nested_sensitive_keys(
 
 
 @pytest.mark.parametrize(
+    "content",
+    [
+        {**_profile_content(), "skills": [{"apiKey": "forbidden"}]},
+        {**_profile_content(), "skills": [{"API-KEY": "forbidden"}]},
+        {**_profile_content(), "skills": [{"clientSecret": "forbidden"}]},
+        {**_profile_content(), "bio": "Use api_key=abc123 to connect."},
+        {**_profile_content(), "bio": "Authorization: Bearer abc123"},
+        {**_profile_content(), "bio": "Configure client_secret=abc123 before starting."},
+        {**_profile_content(), "bio": "Configure clientSecret=abc123 before starting."},
+        {**_profile_content(), "bio": "Configure clientsecret=abc123 before starting."},
+        {**_profile_content(), "bio": "Configure access_token=abc123 before starting."},
+        {**_profile_content(), "bio": "Configure accessToken=abc123 before starting."},
+        {**_profile_content(), "bio": "Configure accesstoken=abc123 before starting."},
+    ],
+)
+def test_fixture_helpers_reject_credential_key_variants_and_assignment_text(
+    tmp_path: Path, content: dict[str, object]
+) -> None:
+    from fiverr_seller_os.models import InvalidPublicContentError
+    from fiverr_seller_os.store import initialize_store
+
+    database_path = initialize_store(tmp_path / "state")
+    with pytest.raises(InvalidPublicContentError, match="credential"):
+        seed_profile_fixture(database_path, content)
+
+
+@pytest.mark.parametrize("key", ["client_secret", "clientSecret", "clientsecret", "access_token", "accessToken", "accesstoken"])
+def test_fixture_helpers_reject_compact_and_camel_credential_keys(tmp_path: Path, key: str) -> None:
+    from fiverr_seller_os.models import InvalidPublicContentError
+    from fiverr_seller_os.store import initialize_store
+
+    database_path = initialize_store(tmp_path / "state")
+    with pytest.raises(InvalidPublicContentError, match="sensitive"):
+        seed_profile_fixture(database_path, {**_profile_content(), "skills": [{key: "forbidden"}]})
+
+
+def test_public_prose_can_discuss_an_api_key_without_storing_one(tmp_path: Path) -> None:
+    from fiverr_seller_os.store import initialize_store
+
+    database_path = initialize_store(tmp_path / "state")
+    profile = seed_profile_fixture(
+        database_path,
+        {
+            **_profile_content(),
+            "bio": "I can explain client secrets and access tokens without collecting credentials.",
+        },
+    )
+    assert profile.id == 1
+
+
+@pytest.mark.parametrize(
     "packages",
     [
         {"basic": "not a package object"},

@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sqlite3
+import re
 
 DATABASE_NAME = "seller_os.sqlite3"
 
@@ -27,17 +28,35 @@ def initialize_store(state_dir: Path) -> Path:
     never creates the runtime default location.
     """
     resolved_state_dir = Path(state_dir).expanduser()
+    state_directory_exists = resolved_state_dir.exists()
+    database_path = resolved_state_dir / DATABASE_NAME
+
+    # An existing database may contain a legacy changesets table that needs an
+    # explicit migration. Inspect it before changing permissions on either
+    # pre-existing filesystem object or making any schema changes.
+    if state_directory_exists and database_path.exists():
+        existing_connection = open_connection(database_path)
+        try:
+            _reject_incompatible_changesets_schema(existing_connection)
+        finally:
+            existing_connection.close()
+
     resolved_state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(resolved_state_dir, 0o700)
-    database_path = resolved_state_dir / DATABASE_NAME
 
     connection = open_connection(database_path)
     try:
-        os.chmod(database_path, 0o600)
         with connection:
+            # Validate an existing legacy table before changing the database's
+            # permissions or schema. A rejected legacy database must remain
+            # byte-for-byte and mode-for-mode available for explicit migration.
+            _reject_incompatible_changesets_schema(connection)
             for statement in _SCHEMA:
                 connection.execute(statement)
             _migrate_legacy_revisions(connection)
+        # New databases and accepted schemas are private. Do this only after
+        # compatibility validation so a rejected existing database is untouched.
+        os.chmod(database_path, 0o600)
     finally:
         connection.close()
     return database_path
@@ -51,6 +70,41 @@ def _migrate_legacy_revisions(connection: sqlite3.Connection) -> None:
             connection.execute(
                 f"ALTER TABLE {table} ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1)"
             )
+
+
+def _reject_incompatible_changesets_schema(connection: sqlite3.Connection) -> None:
+    """Refuse to overwrite an older changeset table with unreviewed data."""
+    table_exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'changesets'"
+    ).fetchone()
+    if table_exists is None:
+        return
+    columns = connection.execute("PRAGMA table_info(changesets)").fetchall()
+    expected = {
+        "id": ("INTEGER", 0, None, 1),
+        "target_type": ("TEXT", 1, None, 0),
+        "target_id": ("INTEGER", 1, None, 0),
+        "patch_json": ("TEXT", 1, None, 0),
+        "base_revision": ("INTEGER", 1, None, 0),
+        "actor": ("TEXT", 1, None, 0),
+        "status": ("TEXT", 1, "'proposed'", 0),
+        "created_at": ("TEXT", 1, "CURRENT_TIMESTAMP", 0),
+    }
+    actual = {str(row[1]): (str(row[2]).upper(), int(row[3]), row[4], int(row[5])) for row in columns}
+    sql_row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'changesets'"
+    ).fetchone()
+    normalized_sql = re.sub(r"\s+", "", str(sql_row[0]).upper()) if sql_row else ""
+    required_constraints = (
+        "CHECK(TARGET_TYPEIN('PROFILE','GIG'))",
+        "CHECK(JSON_VALID(PATCH_JSON)ANDJSON_TYPE(PATCH_JSON)='OBJECT')",
+        "CHECK(BASE_REVISION>=1)",
+        "CHECK(STATUS='PROPOSED')",
+    )
+    if actual != expected or not all(constraint in normalized_sql for constraint in required_constraints):
+        raise RuntimeError(
+            "The existing changesets table is incompatible and requires an explicit migration; local data was not changed"
+        )
 
 
 _SCHEMA = (
@@ -80,12 +134,14 @@ CREATE TABLE IF NOT EXISTS gigs (
     """
 CREATE TABLE IF NOT EXISTS changesets (
     id INTEGER PRIMARY KEY,
-    entity_type TEXT NOT NULL,
-    entity_id INTEGER,
-    proposed_content_json TEXT NOT NULL CHECK(json_valid(proposed_content_json) AND json_type(proposed_content_json) = 'object'),
+    target_type TEXT NOT NULL CHECK(target_type IN ('profile', 'gig')),
+    target_id INTEGER NOT NULL,
+    patch_json TEXT NOT NULL CHECK(json_valid(patch_json) AND json_type(patch_json) = 'object'),
+    base_revision INTEGER NOT NULL CHECK(base_revision >= 1),
+    actor TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'proposed',
-    approved_at TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK(status = 'proposed')
 )
 """,
 
