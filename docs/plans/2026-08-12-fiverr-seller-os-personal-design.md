@@ -37,7 +37,7 @@ Seller OS domain services
 SQLite canonical state + append-only audit events
 ```
 
-The MCP service is local-only. The data directory is outside version control and uses owner-only permissions. Seller OS stores credential plans and project references, never secrets or raw client private material.
+The MCP service is local-only. The data directory is outside version control and uses owner-only permissions. Its default is a user-writable application-data directory, with a testable `FIVERR_SELLER_OS_STATE_DIR` override; the source checkout's `local/state/` path is not the installed-runtime default. Seller OS stores credential plans and project references, never secrets or raw client private material.
 
 ## Canonical workflow
 
@@ -90,7 +90,7 @@ local/
   src/                 Python package and stdio MCP entry point
   tests/               Unit and integration tests
   scripts/             Local setup and test helpers
-  state/               Gitignored SQLite state; created at runtime
+  state/               Ignored checkout-only development override; not the installed default
 
 private/
   SECURITY.md          Threat model and operating rules

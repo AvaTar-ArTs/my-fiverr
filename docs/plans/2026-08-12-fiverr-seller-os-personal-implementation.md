@@ -23,7 +23,7 @@
 
 **Step 1: Write failing test**
 
-Assert the package version is available and that the runtime state path resolves under `local/state/`.
+Assert the package version is available and that the runtime state path resolves without creating it. Test runs use the `FIVERR_SELLER_OS_STATE_DIR` override; installed macOS defaults use a user-writable Application Support location.
 
 **Step 2: Run test to verify failure**
 
@@ -33,7 +33,7 @@ Expected: FAIL because package/settings are absent.
 
 **Step 3: Implement minimal package/settings module**
 
-Define `STATE_DIR = Path(__file__).parents[2] / "state"`; do not create state at import time.
+Define a side-effect-free state-path helper. Respect `FIVERR_SELLER_OS_STATE_DIR` when present; on macOS default to a user-writable Application Support location. Do not create state at import time.
 
 **Step 4: Verify green**
 
