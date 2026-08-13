@@ -54,6 +54,7 @@ def initialize_store(state_dir: Path) -> Path:
             for statement in _SCHEMA:
                 connection.execute(statement)
             _migrate_legacy_revisions(connection)
+            _migrate_legacy_project_fields(connection)
         # New databases and accepted schemas are private. Do this only after
         # compatibility validation so a rejected existing database is untouched.
         os.chmod(database_path, 0o600)
@@ -70,6 +71,20 @@ def _migrate_legacy_revisions(connection: sqlite3.Connection) -> None:
             connection.execute(
                 f"ALTER TABLE {table} ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1)"
             )
+
+
+def _migrate_legacy_project_fields(connection: sqlite3.Connection) -> None:
+    """Add lifecycle read fields without discarding an earlier local project table."""
+    columns = {row[1] for row in connection.execute("PRAGMA table_info(projects)")}
+    additions = (
+        ("buyer_brief_json", "TEXT NOT NULL DEFAULT '{}'"),
+        ("title", "TEXT NOT NULL DEFAULT ''"),
+        ("summary", "TEXT NOT NULL DEFAULT ''"),
+        ("revision", "INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1)"),
+    )
+    for name, definition in additions:
+        if name not in columns:
+            connection.execute(f"ALTER TABLE projects ADD COLUMN {name} {definition}")
 
 
 def _reject_incompatible_changesets_schema(connection: sqlite3.Connection) -> None:
@@ -159,8 +174,14 @@ CREATE TABLE IF NOT EXISTS changesets (
 CREATE TABLE IF NOT EXISTS projects (
     id INTEGER PRIMARY KEY,
     gig_id INTEGER REFERENCES gigs(id),
-    buyer_brief_json TEXT NOT NULL CHECK(json_valid(buyer_brief_json) AND json_type(buyer_brief_json) = 'object'),
-    status TEXT NOT NULL DEFAULT 'intake',
+    buyer_brief_json TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(buyer_brief_json) AND json_type(buyer_brief_json) = 'object'),
+    title TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+    status TEXT NOT NULL DEFAULT 'lead' CHECK(status IN (
+        'lead', 'intake', 'scoped', 'quoted', 'ordered', 'building',
+        'testing', 'delivery-ready', 'delivered', 'closed'
+    )),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 )
