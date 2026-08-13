@@ -17,4 +17,4 @@ chmod +x "$SCRIPT_DIR/setup.sh"
 chmod +x "$SCRIPT_DIR/test_mcp.py"
 
 echo "Seller OS local environment is ready."
-echo "Run: $SCRIPT_DIR/test_mcp.py"
+echo "Run: cd $LOCAL_ROOT && uv run python scripts/test_mcp.py"

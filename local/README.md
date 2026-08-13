@@ -21,7 +21,7 @@ remote endpoint.
 ## Verify the MCP boundary
 
 ```sh
-./scripts/test_mcp.py
+uv run python scripts/test_mcp.py
 ```
 
 The check starts the actual `fiverr_seller_os.cli` stdio server in a temporary

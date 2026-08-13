@@ -18,6 +18,7 @@ def test_setup_script_is_local_and_idempotent() -> None:
     source = script.read_text()
     assert "uv sync" in source
     assert "test_mcp.py" in source
+    assert "uv run python scripts/test_mcp.py" in source
     for forbidden in ("cloudflared", "tunnel", "ftp", "playwright", "launchctl"):
         assert forbidden not in source.casefold()
 
