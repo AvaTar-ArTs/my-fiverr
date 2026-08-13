@@ -258,6 +258,10 @@ Add a lightweight test that asserts none of the v1 tool descriptions contain `pu
 
 Run: `cd local && pytest tests/test_server_tools.py -v`
 
+**Completion note:** Tasks 1–10 are implemented in `main`. The current release
+is local stdio-only; remote ChatGPT access, HTTP transport, tunnels, Fiverr API
+calls, and browser control remain deferred behind the runbooks in `private/`.
+
 **Step 3: Write the runbooks**
 
 State that any personal ChatGPT integration is read/fetch-only until verified; remote access, OAuth, browser filling, and tunneling need separately approved designs.
