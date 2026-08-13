@@ -53,7 +53,7 @@ These are reasons to port the contracts, not to merge databases. A v3 migration 
 
 ## Domain vocabulary
 
-- **Evidence card:** metadata about a source-backed claim; it never contains the source's raw contents.
+- **Evidence card:** metadata about a source-backed claim; it never contains the source's raw contents. `observed_summary` is caller-supplied, human-reviewable metadata, not an extraction API.
 - **Source reference:** a caller-supplied relative path or stable external reference; it is a pointer for human review, not permission to read arbitrary files.
 - **Epistemic state:** `observed`, `inherited`, `inferred`, `declared`, `draft`, or `blocked`.
 - **Usage gate:** `approved`, `needs_review`, or `blocked`.
@@ -177,4 +177,3 @@ Ambiguous v2 rows are reported for human review and excluded from the v1 databas
 V3 is complete only when one local checkout can initialize or migrate the existing v1 database without duplicating it; add and review a metadata-only synthetic evidence card; triage a synthetic brief without retaining it; compose a deterministic evidence-linked draft; export a source-linked Markdown/CSV handoff without secrets or raw input; run the workflow through bounded CLI and read-heavy stdio MCP tools; and pass regression, migration, security, documentation, and independent review gates.
 
 Until then, v3 is a staged implementation effort, not a claim of Fiverr readiness or marketplace performance.
-

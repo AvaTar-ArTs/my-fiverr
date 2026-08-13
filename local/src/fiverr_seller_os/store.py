@@ -38,6 +38,7 @@ def initialize_store(state_dir: Path) -> Path:
         existing_connection = open_connection(database_path)
         try:
             _reject_incompatible_changesets_schema(existing_connection)
+            _reject_incompatible_evidence_schema(existing_connection)
         finally:
             existing_connection.close()
 
@@ -51,6 +52,7 @@ def initialize_store(state_dir: Path) -> Path:
             # permissions or schema. A rejected legacy database must remain
             # byte-for-byte and mode-for-mode available for explicit migration.
             _reject_incompatible_changesets_schema(connection)
+            _reject_incompatible_evidence_schema(connection)
             for statement in _SCHEMA:
                 connection.execute(statement)
             _migrate_legacy_revisions(connection)
@@ -127,6 +129,34 @@ def _reject_incompatible_changesets_schema(connection: sqlite3.Connection) -> No
         )
 
 
+def _reject_incompatible_evidence_schema(connection: sqlite3.Connection) -> None:
+    """Refuse to reuse a same-named evidence table with an unknown shape."""
+    table_exists = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'evidence_cards'"
+    ).fetchone()
+    if table_exists is None:
+        return
+    actual = {str(row[1]): str(row[2]).upper() for row in connection.execute("PRAGMA table_info(evidence_cards)")}
+    expected = {
+        "id": "INTEGER",
+        "source_ref": "TEXT",
+        "source_digest": "TEXT",
+        "title": "TEXT",
+        "observed_summary": "TEXT",
+        "epistemic_state": "TEXT",
+        "usage_gate": "TEXT",
+        "rights_state": "TEXT",
+        "uncertainty": "TEXT",
+        "reviewer": "TEXT",
+        "reviewed_at": "TEXT",
+        "created_at": "TEXT",
+    }
+    if actual != expected:
+        raise RuntimeError(
+            "The existing evidence_cards table is incompatible and requires an explicit migration; local data was not changed"
+        )
+
+
 _SCHEMA = (
     """
 CREATE TABLE IF NOT EXISTS profiles (
@@ -195,6 +225,23 @@ CREATE TABLE IF NOT EXISTS audit_events (
     entity_id INTEGER,
     event_data_json TEXT NOT NULL CHECK(json_valid(event_data_json) AND json_type(event_data_json) = 'object'),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+""",
+    """
+CREATE TABLE IF NOT EXISTS evidence_cards (
+    id INTEGER PRIMARY KEY,
+    source_ref TEXT NOT NULL,
+    source_digest TEXT,
+    title TEXT NOT NULL,
+    observed_summary TEXT NOT NULL,
+    epistemic_state TEXT NOT NULL CHECK(epistemic_state IN ('observed', 'inherited', 'inferred', 'declared', 'draft', 'blocked')),
+    usage_gate TEXT NOT NULL CHECK(usage_gate IN ('approved', 'needs_review', 'blocked')),
+    rights_state TEXT NOT NULL CHECK(rights_state IN ('owned', 'permission_needed', 'private', 'unknown')),
+    uncertainty TEXT NOT NULL,
+    reviewer TEXT,
+    reviewed_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK((usage_gate = 'approved' AND reviewer IS NOT NULL AND reviewed_at IS NOT NULL AND rights_state = 'owned' AND epistemic_state IN ('observed', 'inherited')) OR usage_gate <> 'approved')
 )
 """,
     """

@@ -53,10 +53,23 @@ def test_store_has_only_canonical_workflow_tables_and_validates_json_content(tmp
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
             )
         }
-        assert tables == {"profiles", "gigs", "changesets", "projects", "audit_events"}
+        assert tables == {"profiles", "gigs", "changesets", "projects", "audit_events", "evidence_cards"}
 
         profile_columns = {row[1]: row[2] for row in connection.execute("PRAGMA table_info(profiles)")}
         assert profile_columns["public_content_json"] == "TEXT"
+
+
+def test_existing_v1_rows_survive_additive_evidence_migration(tmp_path: Path) -> None:
+    from fiverr_seller_os.store import initialize_store, open_connection
+
+    database_path = initialize_store(tmp_path / "seller-os-state")
+    with open_connection(database_path) as connection:
+        connection.execute("INSERT INTO profiles (public_content_json) VALUES ('{}')")
+        connection.commit()
+    initialize_store(tmp_path / "seller-os-state")
+    with open_connection(database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM evidence_cards").fetchone()[0] == 0
 
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute("INSERT INTO profiles (public_content_json) VALUES ('not-json')")
