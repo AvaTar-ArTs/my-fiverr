@@ -1,0 +1,72 @@
+{
+  "schema_version": "seller-os-gig-draft/v1",
+  "status": "draft",
+  "seller_username": "chotaku",
+  "source_url": "https://www.fiverr.com/chotaku/build-custom-python-ai-automation-and-workflow-tools",
+  "source_observed_at": "2026-08-13",
+  "title": "I will build custom Python AI automation and workflow tools",
+  "description": "I build custom Python automation tools and AI-assisted workflows for a clearly defined business or creative task. I can connect documented APIs, process files or structured data, organize media, add model-assisted steps, and turn a manual process into a reusable tool. You receive maintainable source code, clear setup notes, and a focused handoff matched to the agreed workflow. Send the current process, inputs, desired output, and tools involved before ordering so the scope can be confirmed. I do not promise specific business results; delivery depends on documented requirements, access supplied by the buyer, and the selected package.",
+  "category_observed": "Programming & Tech / AI Development / AI Integrations",
+  "tags": [
+    "python automation",
+    "ai automation",
+    "workflow automation",
+    "api integration",
+    "python tools"
+  ],
+  "packages": {
+    "basic": {
+      "name": "Focused AI Automation",
+      "description": "One focused Python or AI automation for a clearly defined task.",
+      "price_usd": 100,
+      "delivery_days": 3,
+      "revisions": 1,
+      "features": ["one defined workflow", "source code", "setup notes"]
+    },
+    "standard": {
+      "name": "Custom AI Workflow",
+      "description": "A multi-step workflow with documented API integration and processing logic.",
+      "price_usd": 250,
+      "delivery_days": 5,
+      "revisions": 2,
+      "features": ["multi-step workflow", "one documented API or database integration", "source code", "setup notes"]
+    },
+    "premium": {
+      "name": "Advanced Automation System",
+      "description": "A larger automation system with multiple processing stages and agreed integrations.",
+      "price_usd": 500,
+      "delivery_days": 7,
+      "revisions": 3,
+      "features": ["multiple workflow stages", "agreed API or database integrations", "source code", "handoff documentation"]
+    }
+  },
+  "requirements": [
+    "Describe the current workflow and the exact result you want.",
+    "List the input formats, output format, and documented tools or APIs involved.",
+    "Provide fictional or redacted sample data and an example of the expected output.",
+    "Do not send passwords, cookies, API keys, tokens, or other credentials."
+  ],
+  "faq": [
+    {
+      "question": "What kinds of workflows can you build?",
+      "answer": "Focused Python automations, file or data processing, documented API integrations, AI-assisted steps, and reusable multi-step workflows. Scope is confirmed before work begins."
+    },
+    {
+      "question": "Will I receive the source code?",
+      "answer": "Yes, source code and package-specific setup or handoff notes are included."
+    },
+    {
+      "question": "Can you connect to my existing service?",
+      "answer": "Yes, when the service has documented interfaces and the selected package includes the required integration. Use redacted samples and never send credentials in messages."
+    }
+  ],
+  "evidence_gate": {
+    "status": "needs_review",
+    "required_before_public_claims": [
+      "Review each portfolio asset for ownership or permission.",
+      "Record observed facts separately from inferred or declared claims.",
+      "Approve only evidence that is safe for public use and does not expose client data."
+    ]
+  },
+  "publication_policy": "Local draft only. Human review and explicit Fiverr-side publication are required."
+}
