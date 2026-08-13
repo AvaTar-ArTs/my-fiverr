@@ -1,0 +1,25 @@
+{
+  "audit_date": "2026-08-13",
+  "html_source": {
+    "path": "/Users/steven/Downloads/Branch_·_Branch_·_Fiverr_Profile_Optimization (1).html",
+    "status": "read_bounded_structural_surface",
+    "sha256": "7c79823c58b977255d8a95b54de7bbbf190913b4a1a03c4b11481d908979a341",
+    "bytes": 25313378
+  },
+  "hermes_safe_inventory": {
+    "agent_skills_skill_files": 310,
+    "hermes_profile_skills_skill_files": 124,
+    "hermes_source_skills_skill_files": 71,
+    "hermes_optional_skill_files": 113,
+    "plugin_directories_observed": ["orca-status"],
+    "agents_guidance_files": ["/Users/steven/.hermes/hermes-agent/AGENTS.md", "/Users/steven/.hermes/hermes-agent/apps/desktop/AGENTS.md"]
+  },
+  "security": {
+    "secrets_read": false,
+    "auth_read": false,
+    "runtime_databases_read": false,
+    "session_transcripts_read": false,
+    "fiverr_actions": false
+  },
+  "status": "review_stage_not_publish"
+}

@@ -1,0 +1,11 @@
+path,reason,action
+/Users/steven/.hermes/auth,credential and OAuth state,excluded
+/Users/steven/.hermes/.env,secret-bearing environment file,excluded
+/Users/steven/.hermes/config.yaml,private runtime configuration,excluded
+/Users/steven/.hermes/sessions,private conversation/session state,excluded
+/Users/steven/.hermes/memories,private agent memory,excluded
+/Users/steven/.hermes/logs,private runtime logs,excluded
+/Users/steven/.hermes/kanban.db,private runtime database,excluded
+/Users/steven/.hermes/cache/delegation,private delegation transcripts,excluded
+/Users/steven/.hermes/hermes-agent/node_modules,dependency tree,excluded
+/Users/steven/.hermes/hermes-agent/venv,installed runtime packages,excluded
