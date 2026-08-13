@@ -7,6 +7,9 @@ name = "fiverr-seller-os"
 version = "0.1.0"
 description = "Private, local-first Fiverr Seller OS"
 requires-python = ">=3.11"
+dependencies = [
+    "mcp>=2,<3",
+]
 
 [dependency-groups]
 dev = [
