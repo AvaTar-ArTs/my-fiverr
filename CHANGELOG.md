@@ -12,6 +12,9 @@
 - Added the official MCP Python SDK 2.x stdio adapter with 13 local-only tools.
 - Added repeatable local setup and an isolated end-to-end MCP handshake check.
 - Documented deferred ChatGPT access and Fiverr browser-worker boundaries.
+- Audited the local Hermes installation for additional agent, MCP, delegation,
+  and security guidance; adopted its stdio hygiene, redaction, least-privilege,
+  and OS-isolation lessons without importing Hermes runtime state.
 
 The 0.1.0 runtime does not call Fiverr, expose HTTP, start tunnels, automate a
 browser, or store credentials/cookies/session material.
