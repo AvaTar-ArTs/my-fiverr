@@ -11,6 +11,10 @@ class PackageDraft:
     name: str
     scope: str
 
+    def __post_init__(self) -> None:
+        if not self.name.strip() or not self.scope.strip():
+            raise ValueError("package name and scope are required")
+
 
 @dataclass(frozen=True, slots=True)
 class EvidenceRef:
@@ -18,6 +22,12 @@ class EvidenceRef:
     usage_gate: str
     label: str
     uncertainty: str = "unknown"
+    rights_state: str = "owned"
+    epistemic_state: str = "observed"
+
+    def __post_init__(self) -> None:
+        if not self.id.strip() or self.usage_gate not in {"approved", "needs_review", "blocked"}:
+            raise ValueError("evidence reference is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +45,10 @@ class GigDraft:
             raise ValueError("description must be 1-1200 characters")
         if not 1 <= len(self.packages) <= 3:
             raise ValueError("packages must contain one to three packages")
+        if len(self.tags) > 5 or any(not isinstance(tag, str) or not tag.strip() for tag in self.tags):
+            raise ValueError("tags must contain at most five non-empty strings")
+        if any(not isinstance(item, str) or not item.strip() for item in self.requirements):
+            raise ValueError("requirements must be non-empty strings")
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +78,12 @@ def preflight_gig(draft: GigDraft, evidence: tuple[EvidenceRef, ...]) -> Preflig
     for code, pattern, message in _PATTERNS:
         if pattern.search(text):
             findings.append(PreflightFinding(code, message))
-    usable = tuple(ref for ref in evidence if ref.usage_gate == "approved")
+    usable = tuple(
+        ref for ref in evidence
+        if ref.usage_gate == "approved"
+        and ref.rights_state == "owned"
+        and ref.epistemic_state in {"observed", "inherited"}
+    )
     if not usable:
         findings.append(PreflightFinding("missing_evidence", "At least one approved evidence reference is required."))
     ids = tuple(ref.id for ref in usable)

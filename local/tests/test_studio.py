@@ -77,3 +77,19 @@ def test_preflight_does_not_call_network_or_retain_external_content():
     assert report.evidence_ids == ()
     assert report.manual_review_notes
     assert all("Private source" not in note for note in report.manual_review_notes)
+
+
+def test_preflight_excludes_approved_but_unusable_evidence():
+    report = preflight_gig(
+        _draft(),
+        (EvidenceRef("ev-private", "approved", "private", "low", "private", "observed"),),
+    )
+    assert report.evidence_ids == ()
+    assert any(finding.code == "missing_evidence" for finding in report.findings)
+
+
+def test_draft_limits_tags_and_requires_nonempty_package_fields():
+    with pytest.raises(ValueError, match="tags"):
+        _draft(tags=("one", "two", "three", "four", "five", "six"))
+    with pytest.raises(ValueError, match="package"):
+        _draft(packages=(PackageDraft("", "scope"),))
